@@ -54,6 +54,7 @@ STATE_PATH = BASE_DIR / "state" / "magi_state.json"
 
 _MODEL = "gemini-3.5-flash-lite"
 _MAX_DEBATE_ROUNDS = 3
+_SEARCH_PACE_DELAY = 13.0  # Spaced delay in seconds to stay strictly below Google Search 5 RPM quota
 
 PLUGIN = {
     "name": "magi_system",
@@ -79,6 +80,10 @@ PLUGIN = {
         "countering/agreeing, and synthesizing new claims in an active conversational triad). "
         "In 'max' mode, the debate automatically terminates early the moment all three units "
         "reach consensus (all agree or all disagree). You can optionally pass 'cycles' (default 3, min 2, max 6). "
+        "GOOGLE SEARCH: If a decision benefits from current web information or the user asks for "
+        "deep verification, ask the user first: 'Would you like the MAGI system to use Google Search? "
+        "It will take about 2 minutes to deliberate due to search pacing, but you will get more accurate results.' "
+        "When confirmed, pass use_search=True. If not confirmed or False, MAGI runs instant deliberation without web search. "
         "If MAGI hasn't been activated yet and the user poses a decision to it by name, "
         "still call this with action='ask' — it will refuse and remind them to activate it."
     ),
@@ -107,6 +112,14 @@ PLUGIN = {
                 "description": (
                     "Optional for 'max' mode: maximum number of debate cycles (default 3, min 2, max 6). "
                     "Each cycle consists of one claim and one response."
+                ),
+            },
+            "use_search": {
+                "type": "BOOLEAN",
+                "description": (
+                    "Set to True if the user confirmed using Google Search. When True, MAGI performs a deep, "
+                    "search-grounded deliberation paced slowly (~1.5 to 2 minutes total) to stay strictly within "
+                    "search quota limits. Defaults to False (instant deliberation without web search)."
                 ),
             },
         },
@@ -191,8 +204,8 @@ def _is_transient_error(e) -> bool:
 
 # ── core persona call with retry & JSON normalization ─────────────────────────
 
-def _call_persona(prompt: str, unit_name: str, api_key: str, attempts: int = 3) -> dict:
-    """Shared call+parse logic with transient backoff retry and robust JSON normalization."""
+def _call_persona(prompt: str, unit_name: str, api_key: str, attempts: int = 3, use_search: bool = False) -> dict:
+    """Shared call+parse logic with transient backoff retry, grounding fallback, and robust JSON normalization."""
     from google import genai
     from google.genai import types
     persona = _PERSONAS[unit_name]
@@ -201,12 +214,17 @@ def _call_persona(prompt: str, unit_name: str, api_key: str, attempts: int = 3) 
     for attempt in range(attempts):
         try:
             client = genai.Client(api_key=api_key)
+            # If search is requested, try Google Search grounding first; if quota is hit on retry, fall back to base model
+            config = None
+            if use_search and attempt == 0:
+                config = types.GenerateContentConfig(
+                    tools=[types.Tool(google_search=types.GoogleSearch())]
+                )
+
             resp = client.models.generate_content(
                 model=_MODEL,
                 contents=prompt,
-                config=types.GenerateContentConfig(
-                    tools=[types.Tool(google_search=types.GoogleSearch())]
-                ),
+                config=config,
             )
             text = (resp.text or "").strip()
             if "{" in text and "}" in text:
@@ -242,7 +260,7 @@ def _call_persona(prompt: str, unit_name: str, api_key: str, attempts: int = 3) 
         except Exception as e:
             last_err = e
             if _is_transient_error(e) and attempt < attempts - 1:
-                time.sleep(1.2 * (attempt + 1))
+                time.sleep(1.0 * (attempt + 1))
                 continue
             break
 
@@ -256,9 +274,9 @@ def _call_persona(prompt: str, unit_name: str, api_key: str, attempts: int = 3) 
     }
 
 
-# ── QUICK MODE (independent parallel vote) ───────────────────────────────────
+# ── QUICK MODE (independent vote) ─────────────────────────────────────────────
 
-def _get_verdict(unit_name: str, question: str, api_key: str) -> dict:
+def _get_verdict(unit_name: str, question: str, api_key: str, use_search: bool = False) -> dict:
     persona = _PERSONAS[unit_name]
     prompt = (
         f"{persona['prompt']}\n\n"
@@ -268,20 +286,31 @@ def _get_verdict(unit_name: str, question: str, api_key: str) -> dict:
         ' "reasoning": ONE short sentence (under 20 words) explaining your '
         "verdict, in character, in the same language as the question."
     )
-    return _call_persona(prompt, unit_name, api_key)
+    return _call_persona(prompt, unit_name, api_key, use_search=use_search)
 
 
-def _run_quick(question: str, api_key: str) -> list:
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        futures = [pool.submit(_get_verdict, unit, question, api_key) for unit in _order]
-        results = [f.result() for f in futures]
+def _run_quick(question: str, api_key: str, use_search: bool = False, player=None) -> list:
+    if use_search:
+        # Paced execution for Google Search quota compliance (~30s total)
+        results = []
+        for i, unit in enumerate(_order):
+            if i > 0:
+                _log(player, f"JARVIS: Pacing MAGI Google Search query ({i+1}/3) — waiting {int(_SEARCH_PACE_DELAY)}s...")
+                time.sleep(_SEARCH_PACE_DELAY)
+            results.append(_get_verdict(unit, question, api_key, use_search=True))
+    else:
+        # Instant parallel execution
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            futures = [pool.submit(_get_verdict, unit, question, api_key, False) for unit in _order]
+            results = [f.result() for f in futures]
+
     results.sort(key=lambda r: _order.index(r["unit"]))
     return [results]
 
 
-# ── THINKING MODE (parallel round revisions) ──────────────────────────────────
+# ── THINKING MODE (parallel/paced round revisions) ────────────────────────────
 
-def _get_debate_verdict(unit_name: str, question: str, prev_round: list, api_key: str) -> dict:
+def _get_debate_verdict(unit_name: str, question: str, prev_round: list, api_key: str, use_search: bool = False) -> dict:
     persona = _PERSONAS[unit_name]
     own_prev = next(r for r in prev_round if r["unit"] == unit_name)
     others = [r for r in prev_round if r["unit"] != unit_name]
@@ -304,22 +333,30 @@ def _get_debate_verdict(unit_name: str, question: str, prev_round: list, api_key
         "in the same language as the question — if you changed your mind, "
         "briefly say why; if not, you may briefly rebut."
     )
-    return _call_persona(prompt, unit_name, api_key)
+    return _call_persona(prompt, unit_name, api_key, use_search=use_search)
 
 
-def _run_debate(question: str, api_key: str, max_rounds: int = _MAX_DEBATE_ROUNDS) -> list:
-    rounds = _run_quick(question, api_key)
+def _run_debate(question: str, api_key: str, max_rounds: int = _MAX_DEBATE_ROUNDS, use_search: bool = False, player=None) -> list:
+    rounds = _run_quick(question, api_key, use_search=use_search, player=player)
 
-    for _ in range(2, max_rounds + 1):
+    for round_num in range(2, max_rounds + 1):
         prev = rounds[-1]
         prev_verdicts = {r["unit"]: r["verdict"] for r in prev}
         if len(set(prev_verdicts.values())) == 1:
             break
 
-        with ThreadPoolExecutor(max_workers=3) as pool:
-            futures = [pool.submit(_get_debate_verdict, unit, question, prev, api_key)
-                       for unit in _order]
-            new_results = [f.result() for f in futures]
+        if use_search:
+            new_results = []
+            for unit in _order:
+                _log(player, f"JARVIS: Pacing MAGI Google Search revision for {unit} (Round {round_num})...")
+                time.sleep(_SEARCH_PACE_DELAY)
+                new_results.append(_get_debate_verdict(unit, question, prev, api_key, use_search=True))
+        else:
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                futures = [pool.submit(_get_debate_verdict, unit, question, prev, api_key, False)
+                           for unit in _order]
+                new_results = [f.result() for f in futures]
+
         new_results.sort(key=lambda r: _order.index(r["unit"]))
         rounds.append(new_results)
 
@@ -332,7 +369,7 @@ def _run_debate(question: str, api_key: str, max_rounds: int = _MAX_DEBATE_ROUND
 
 # ── MAX MODE: INTERACTIVE DEBATE LOOP WITH CONSENSUS DETECTION ───────────────
 
-def _get_initial_claim(unit_name: str, question: str, api_key: str) -> dict:
+def _get_initial_claim(unit_name: str, question: str, api_key: str, use_search: bool = False) -> dict:
     persona = _PERSONAS[unit_name]
     prompt = (
         f"{persona['prompt']}\n\n"
@@ -344,13 +381,13 @@ def _get_initial_claim(unit_name: str, question: str, api_key: str) -> dict:
         ' "claim": ONE or TWO sharp, decisive sentences (under 35 words) in character, '
         "in the same language as the question, asserting your core argument."
     )
-    res = _call_persona(prompt, unit_name, api_key)
+    res = _call_persona(prompt, unit_name, api_key, use_search=use_search)
     res["type"] = "CLAIM"
     return res
 
 
 def _get_response(unit_name: str, question: str, target_unit: str, target_verdict: str,
-                  target_claim: str, transcript: list, api_key: str) -> dict:
+                  target_claim: str, transcript: list, api_key: str, use_search: bool = False) -> dict:
     persona = _PERSONAS[unit_name]
     target_role = _PERSONAS[target_unit]["role"]
 
@@ -375,14 +412,14 @@ def _get_response(unit_name: str, question: str, target_unit: str, target_verdic
         ' "response": ONE or TWO sharp sentences (under 35 words), in character, '
         "in the same language as the question, directly answering their point."
     )
-    res = _call_persona(prompt, unit_name, api_key)
+    res = _call_persona(prompt, unit_name, api_key, use_search=use_search)
     res["type"] = "RESPOND"
     res["target"] = target_unit
     return res
 
 
 def _get_synthesis_claim(unit_name: str, question: str, prev_claim: dict, prev_response: dict,
-                         transcript: list, api_key: str) -> dict:
+                         transcript: list, api_key: str, use_search: bool = False) -> dict:
     persona = _PERSONAS[unit_name]
 
     prior_context = ""
@@ -408,12 +445,12 @@ def _get_synthesis_claim(unit_name: str, question: str, prev_claim: dict, prev_r
         ' "claim": ONE or TWO strong, persuasive sentences (under 35 words) in character, '
         "in the same language as the question, advancing your new claim."
     )
-    res = _call_persona(prompt, unit_name, api_key)
+    res = _call_persona(prompt, unit_name, api_key, use_search=use_search)
     res["type"] = "CLAIM"
     return res
 
 
-def _get_final_ballot(unit_name: str, question: str, transcript: list, api_key: str) -> dict:
+def _get_final_ballot(unit_name: str, question: str, transcript: list, api_key: str, use_search: bool = False) -> dict:
     persona = _PERSONAS[unit_name]
     transcript_summary = "\n".join(
         f"{i+1}. {t['unit']} ({t['role']}) [{t['type']} - {t['verdict']}]: \"{t['reasoning']}\""
@@ -430,7 +467,7 @@ def _get_final_ballot(unit_name: str, question: str, transcript: list, api_key: 
         ' "reasoning": ONE concise closing sentence (under 25 words) in character, '
         "in the same language as the question, summarizing your final conclusion."
     )
-    return _call_persona(prompt, unit_name, api_key)
+    return _call_persona(prompt, unit_name, api_key, use_search=use_search)
 
 
 def _format_max_panel(question: str, transcript: list, final_ballot: list = None,
@@ -464,10 +501,6 @@ def _format_max_panel(question: str, transcript: list, final_ballot: list = None
 
 
 def _check_unanimous_consensus(transcript: list) -> tuple[bool, str, list]:
-    """
-    Checks if all 3 units have spoken at least once and share the exact same verdict.
-    Returns (is_unanimous, verdict_name, list_of_latest_unit_dicts).
-    """
     latest = {}
     for t in transcript:
         latest[t["unit"]] = t
@@ -480,19 +513,10 @@ def _check_unanimous_consensus(transcript: list) -> tuple[bool, str, list]:
     return False, "", []
 
 
-def _run_max_loop_debate(question: str, api_key: str, player=None, cycles: int = 3) -> tuple:
-    """
-    Executes the conversational debate loop:
-      - Randomly pick who wants to make a claim.
-      - Pick one of the other two to respond (agreeing or countering).
-      - The last one sees the two responses and makes a new claim.
-      - One of the other two responds.
-      - EARLY EXIT: Ends immediately as soon as all 3 units share the same stance.
-    """
+def _run_max_loop_debate(question: str, api_key: str, player=None, cycles: int = 3, use_search: bool = False) -> tuple:
     transcript = []
     total_turns = cycles * 2
 
-    # Step 1: Randomly select opening claimant
     claimant = random.choice(_order)
     other_two = [p for p in _order if p != claimant]
     responder = random.choice(other_two)
@@ -501,14 +525,17 @@ def _run_max_loop_debate(question: str, api_key: str, player=None, cycles: int =
     _log(player, f"JARVIS: MAGI Max Debate initialized — {claimant} takes the floor to open the debate.")
 
     # Turn 1: Opening Claim
-    c1 = _get_initial_claim(claimant, question, api_key)
+    c1 = _get_initial_claim(claimant, question, api_key, use_search=use_search)
     c1["cycle"] = 1
     transcript.append(c1)
     _log(player, f"JARVIS: [Turn 1/{total_turns}] {claimant} (CLAIM): {c1['verdict']} — \"{c1['reasoning']}\"")
     _panel(player, f"🖥 MAGI DEBATE [1/{total_turns}]", _format_max_panel(question, transcript))
 
     # Turn 2: First Response
-    r1 = _get_response(responder, question, claimant, c1["verdict"], c1["reasoning"], transcript, api_key)
+    if use_search:
+        _log(player, f"JARVIS: Pacing search delay ({int(_SEARCH_PACE_DELAY)}s)...")
+        time.sleep(_SEARCH_PACE_DELAY)
+    r1 = _get_response(responder, question, claimant, c1["verdict"], c1["reasoning"], transcript, api_key, use_search=use_search)
     r1["cycle"] = 1
     transcript.append(r1)
     _log(player, f"JARVIS: [Turn 2/{total_turns}] {responder} ({r1.get('reaction', 'RESPONSE')} to {claimant}): "
@@ -520,20 +547,21 @@ def _run_max_loop_debate(question: str, api_key: str, player=None, cycles: int =
     consensus_reached = False
     consensus_ballot = None
 
-    # Loop for subsequent cycles
     for cycle in range(2, cycles + 1):
         turn_base = (cycle - 1) * 2
 
         # Observer makes a NEW CLAIM
+        if use_search:
+            _log(player, f"JARVIS: Pacing search delay ({int(_SEARCH_PACE_DELAY)}s)...")
+            time.sleep(_SEARCH_PACE_DELAY)
         new_claimant = observer
-        new_claim = _get_synthesis_claim(new_claimant, question, prev_claim, prev_resp, transcript, api_key)
+        new_claim = _get_synthesis_claim(new_claimant, question, prev_claim, prev_resp, transcript, api_key, use_search=use_search)
         new_claim["cycle"] = cycle
         transcript.append(new_claim)
         _log(player, f"JARVIS: [Turn {turn_base + 1}/{total_turns}] {new_claimant} (NEW CLAIM): "
                     f"{new_claim['verdict']} — \"{new_claim['reasoning']}\"")
         _panel(player, f"🖥 MAGI DEBATE [{turn_base + 1}/{total_turns}]", _format_max_panel(question, transcript))
 
-        # Check early exit: does everyone agree or disagree already?
         is_unanimous, c_verdict, c_ballot = _check_unanimous_consensus(transcript)
         if is_unanimous:
             consensus_reached = True
@@ -546,8 +574,11 @@ def _run_max_loop_debate(question: str, api_key: str, player=None, cycles: int =
         new_responder = random.choice(candidates)
         new_observer = [p for p in _order if p not in (new_claimant, new_responder)][0]
 
+        if use_search:
+            _log(player, f"JARVIS: Pacing search delay ({int(_SEARCH_PACE_DELAY)}s)...")
+            time.sleep(_SEARCH_PACE_DELAY)
         new_resp = _get_response(new_responder, question, new_claimant, new_claim["verdict"],
-                                 new_claim["reasoning"], transcript, api_key)
+                                 new_claim["reasoning"], transcript, api_key, use_search=use_search)
         new_resp["cycle"] = cycle
         transcript.append(new_resp)
         _log(player, f"JARVIS: [Turn {turn_base + 2}/{total_turns}] {new_responder} "
@@ -555,7 +586,6 @@ def _run_max_loop_debate(question: str, api_key: str, player=None, cycles: int =
                     f"{new_resp['verdict']} — \"{new_resp['reasoning']}\"")
         _panel(player, f"🖥 MAGI DEBATE [{turn_base + 2}/{total_turns}]", _format_max_panel(question, transcript))
 
-        # Check early exit after response
         is_unanimous, c_verdict, c_ballot = _check_unanimous_consensus(transcript)
         if is_unanimous:
             consensus_reached = True
@@ -563,22 +593,26 @@ def _run_max_loop_debate(question: str, api_key: str, player=None, cycles: int =
             _log(player, f"JARVIS: All three MAGI units reached unanimous {c_verdict} consensus — ending discussion early.")
             break
 
-        # Update state for next cycle
         prev_claim = new_claim
         prev_resp = new_resp
         observer = new_observer
 
-    # If consensus was reached early, their latest statements are the final ballot
     if consensus_reached and consensus_ballot:
         return transcript, consensus_ballot, True
 
-    # If the debate concluded without complete unanimity, run the binding final ballot
     _log(player, "JARVIS: MAGI deliberation cycles concluded. Calling for final binding vote across all units...")
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        futures = [pool.submit(_get_final_ballot, unit, question, transcript, api_key) for unit in _order]
-        final_ballot = [f.result() for f in futures]
-    final_ballot.sort(key=lambda r: _order.index(r["unit"]))
+    if use_search:
+        final_ballot = []
+        for i, unit in enumerate(_order):
+            _log(player, f"JARVIS: Pacing final ballot search for {unit}...")
+            time.sleep(_SEARCH_PACE_DELAY)
+            final_ballot.append(_get_final_ballot(unit, question, transcript, api_key, use_search=True))
+    else:
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            futures = [pool.submit(_get_final_ballot, unit, question, transcript, api_key, False) for unit in _order]
+            final_ballot = [f.result() for f in futures]
 
+    final_ballot.sort(key=lambda r: _order.index(r["unit"]))
     return transcript, final_ballot, False
 
 
@@ -656,12 +690,15 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
         except (ValueError, TypeError):
             cycles = 3
 
-    _log(player, f"JARVIS: MAGI deliberation started ({mode} mode) — \"{question}\"")
+    use_search = bool(parameters.get("use_search", False))
+
+    search_status_msg = "Google Search Grounding: ENABLED (~2 min paced deliberation)" if use_search else "Google Search Grounding: OFF (instant)"
+    _log(player, f"JARVIS: MAGI deliberation started ({mode} mode, {search_status_msg}) — \"{question}\"")
 
     # ── MAX MODE ──────────────────────────────────────────────────────────────
     if mode == "max":
         transcript, final_ballot, consensus_reached = _run_max_loop_debate(
-            question, api_key, player=player, cycles=cycles
+            question, api_key, player=player, cycles=cycles, use_search=use_search
         )
 
         approvals = sum(1 for r in final_ballot if r["verdict"] == "APPROVE")
@@ -713,9 +750,9 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
 
     # ── QUICK & THINKING MODES ────────────────────────────────────────────────
     if mode == "thinking":
-        rounds = _run_debate(question, api_key)
+        rounds = _run_debate(question, api_key, use_search=use_search, player=player)
     else:
-        rounds = _run_quick(question, api_key)
+        rounds = _run_quick(question, api_key, use_search=use_search, player=player)
 
     final_round = rounds[-1]
     approvals = sum(1 for r in final_round if r["verdict"] == "APPROVE")
