@@ -194,13 +194,20 @@ def _is_transient_error(e) -> bool:
 def _call_persona(prompt: str, unit_name: str, api_key: str, attempts: int = 3) -> dict:
     """Shared call+parse logic with transient backoff retry and robust JSON normalization."""
     from google import genai
+    from google.genai import types
     persona = _PERSONAS[unit_name]
     last_err = None
 
     for attempt in range(attempts):
         try:
             client = genai.Client(api_key=api_key)
-            resp = client.models.generate_content(model=_MODEL, contents=prompt)
+            resp = client.models.generate_content(
+                model=_MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    tools=[types.Tool(google_search=types.GoogleSearch())]
+                ),
+            )
             text = (resp.text or "").strip()
             if "{" in text and "}" in text:
                 text = text[text.find("{"): text.rfind("}") + 1]
