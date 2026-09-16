@@ -8,6 +8,8 @@ Note: These plugins are made for Jarvis by the king Fatihmakes, I did not create
 
 These plugins were recently tested for compatibility in the model: **Mark 54**
 
+Usernames on social media: apollosworld_x, Apollo's World, upgraderguy777, Upgrader_guy
+
 ---
 
 ## 🚀 Key Highlights & Philosophy
