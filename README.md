@@ -6,7 +6,7 @@ These plugins were completely **vibecoded** with one primary design philosophy i
 
 Note: These plugins are made for Jarvis by the king Fatihmakes, I did not create the ai, I only made some custom plugins, and this is solo made but vibe coded.
 
-These plugins were recently tested for compatibility in the model: **Mark 52**
+These plugins were recently tested for compatibility in the model: **Mark 54**
 
 ---
 
@@ -22,6 +22,7 @@ These plugins were recently tested for compatibility in the model: **Mark 52**
 
 | Plugin | Operating System | Primary Dependencies | Token Impact |
 | :--- | :--- | :--- | :--- |
+| **`youtube_controller.py`** `[NEW]` | Windows 10 / 11 (Chrome, Edge, Brave, Firefox) | `pyautogui`, `pygetwindow`, `pywinauto` | **Zero Tokens** *(Vision fallback only)* |
 | **`notification_reader.py`** | Windows 10 (1607+) / 11 | `winsdk` *(auto-installed)* | **Zero Tokens** |
 | **`screen_recorder.py`** | Windows (Full) / macOS & Linux (Voice only) | `opencv-python`, `mss`, `sounddevice` | **Zero Tokens** |
 | **`screenshot_annotate.py`** | Cross-Platform (Windows, macOS, Linux) | `mss`, `Pillow`, `google-genai` | **Low** *(2-Pass Optimized)* |
@@ -32,7 +33,27 @@ These plugins were recently tested for compatibility in the model: **Mark 52**
 
 ## 📦 Detailed Plugin Breakdown
 
-### 1. 🔔 Notification Reader (`notification_reader.py`)
+### 1. 🔴 [NEW] YouTube Controller (`youtube_controller.py`)
+* **OS Support:** Windows 10 and 11 (Works across Chrome, Edge, Brave, Firefox, Opera).
+* **Token Cost:** **0 Tokens** (Native keybinds + Windows UI Automation; optional Vision safety net).
+
+Gives JARVIS instant, hands-free media controls over any active YouTube window or tab without requiring YouTube API tokens or browser extensions.
+
+* **Capabilities:**
+  * **Playback & Audio:** Pause, resume, and toggle playback using dedicated `k` keybinds (prevents accidental page scrolling caused by `Space`), mute (`m`), and volume adjustments.
+  * **Smart Seeking:** Dynamically calculates the optimal sequence of 10s (`l`/`j`) and 5s (`Right`/`Left`) jumps (e.g., *"skip forward 30 seconds"*, *"rewind 15 seconds"*).
+  * **Captions & Navigation:** One-shot subtitle toggling (`c`), next video (`Shift+N`), and previous video (`Shift+P`).
+  * **Display Modes:** Fullscreen (`f`), Theater mode (`t`), and Miniplayer (`i`).
+  * **Speed & Percent Seek:** Adjust playback speed in 0.25x steps (`Shift+.` / `Shift+,`), restart video (`0`), or jump directly to percentages (`1`–`9` for 10%–90%).
+  * **AD SKIPPING!**
+    * **Zero-Token Local UIA:** Scans the active browser's accessibility tree to locate the authentic "Skip" button inside the video canvas.
+    * **Trap-Proof:** Explicitly ignores YouTube masthead traps (*"Skip navigation"*) and advertiser click-through links (*"Visit advertiser"*, *"Learn more"*).
+    * **Real Mouse Movement:** Moves the physical OS mouse cursor to the button and sends hardware clicks, bypassing YouTube's anti-bot detection for synthetic JavaScript clicks.
+    * **Vision Safety Fallback:** If the DOM hides the button, it runs a localized vision pass to verify if the ad is actually skippable before attempting to click—never opening spam ad tabs.
+
+---
+
+### 2. 🔔 Notification Reader (`notification_reader.py`)
 * **OS Support:** Windows 10 (Build 1607+) and Windows 11 only.
 * **Token Cost:** **0 Tokens** (Pure Windows Runtime API).
 * **Auto-Install:** Automatically installs `winsdk` via `pip` on first launch if missing.
@@ -49,7 +70,7 @@ Reads toasts and alerts sitting in the Windows Action/Notification Center withou
 
 ---
 
-### 2. 🎥 Screen Recorder (`screen_recorder.py`)
+### 3. 🎥 Screen Recorder (`screen_recorder.py`)
 * **OS Support:** 
   * **Windows:** Full feature set (Voice control + System-wide Win32 hotkeys).
   * **macOS / Linux:** Voice control supported (Hotkeys skipped due to Win32 dependency).
@@ -66,7 +87,7 @@ Records high-framerate desktop video over time with optional microphone narratio
 
 ---
 
-### 3. 🎯 Screenshot & Annotate (`screenshot_annotate.py`)
+### 4. 🎯 Screenshot & Annotate (`screenshot_annotate.py`)
 * **OS Support:** Cross-Platform (Windows, macOS, Linux).
 * **Token Cost:** **Low** (Downscales full-screen image + runs localized crops).
 
@@ -77,7 +98,7 @@ A visual teaching and UI-finding tool. When you can't find a button or menu item
 
 ---
 
-### 4. 💬 Discord Messenger (`discord_messenger.py`)
+### 5. 💬 Discord Messenger (`discord_messenger.py`)
 * **OS Support:** Windows 10 and 11 only (Controls the official Discord Desktop client).
 * **Token Cost:** **Zero-to-Low** (Uses accessibility trees and local regex before ever calling an LLM).
 
@@ -91,7 +112,7 @@ Allows full hands-free Discord messaging to DMs or server channels, including fu
 
 ---
 
-### 5. 🖥️ MAGI System (`magi_system.py`)
+### 6. 🖥️ MAGI System (`magi_system.py`)
 * **OS Support:** Cross-Platform (Windows, macOS, Linux).
 * **Token Cost:** **Ultra-Low** (Powered by `gemini-3.5-flash-lite`).
 
