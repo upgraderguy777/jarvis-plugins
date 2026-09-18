@@ -16,7 +16,7 @@ Usernames on social media: apollosworld_x, Apollo's World, upgraderguy777, Upgra
 
 - 🆓 **Engineered for Free Tier Users:** Designed specifically for users relying on free API quotas. High-cost vision calls are aggressively downscaled, repetitive UI tasks use local OS automation (zero tokens), and debate loops feature early-exit consensus.
 - 🔌 **Drop-in Architecture:** Built following the standard JARVIS loader format. Drop any `.py` plugin into your plugins directory, and JARVIS auto-discovers it.
-- 🧠 **Multi-Modal & Hybrid:** Blends native Win32/WinRT system APIs with lightweight Gemini models (`gemini-3.5-flash-lite`, `gemini-2.5-flash`).
+- 🧠 **Multi-Modal & Hybrid:** Blends native Win32/WinRT system APIs with lightweight Gemini models (`gemini-3.5-flash-lite`, `gemini-2.5-flash`, Gemini Live native-audio preview).
 
 ---
 
@@ -24,18 +24,18 @@ Usernames on social media: apollosworld_x, Apollo's World, upgraderguy777, Upgra
 
 | Plugin | Operating System | Primary Dependencies | Token Impact |
 | :--- | :--- | :--- | :--- |
-| **`youtube_controller.py`** `[NEW]` | Windows 10 / 11 (Chrome, Edge, Brave, Firefox) | `pyautogui`, `pygetwindow`, `pywinauto` | **Zero Tokens** *(Vision fallback only)* |
+| **`youtube_controller.py`** | Windows 10 / 11 (Chrome, Edge, Brave, Firefox) | `pyautogui`, `pygetwindow`, `pywinauto` | **Zero Tokens** *(Vision fallback only)* |
 | **`notification_reader.py`** | Windows 10 (1607+) / 11 | `winsdk` *(auto-installed)* | **Zero Tokens** |
 | **`screen_recorder.py`** | Windows (Full) / macOS & Linux (Voice only) | `opencv-python`, `mss`, `sounddevice` | **Zero Tokens** |
 | **`screenshot_annotate.py`** | Cross-Platform (Windows, macOS, Linux) | `mss`, `Pillow`, `google-genai` | **Low** *(2-Pass Optimized)* |
-| **`discord_messenger.py`** | Windows 10 / 11 | `pyautogui`, `pywinauto`, `pyperclip` | **Zero-to-Low** *(Cached/Local)* |
+| **`discord_messenger.py`** `[UPDATED]` | Windows 10 / 11 | `pyautogui`, `pywinauto`, `pyperclip`, `Pillow`, `mss` | **Zero-to-Medium** *(Depends on usage)* |
 | **`magi_system.py`** | Cross-Platform (Windows, macOS, Linux) | `google-genai` | **Ultra-Low** *(Flash-Lite Tier)* |
 
 ---
 
 ## 📦 Detailed Plugin Breakdown
 
-### 1. 🔴 [NEW] YouTube Controller (`youtube_controller.py`)
+### 1. 🔴 YouTube Controller (`youtube_controller.py`)
 * **OS Support:** Windows 10 and 11 (Works across Chrome, Edge, Brave, Firefox, Opera).
 * **Token Cost:** **0 Tokens** (Native keybinds + Windows UI Automation; optional Vision safety net).
 
@@ -100,17 +100,31 @@ A visual teaching and UI-finding tool. When you can't find a button or menu item
 
 ---
 
-### 5. 💬 Discord Messenger (`discord_messenger.py`)
-* **OS Support:** Windows 10 and 11 only (Controls the official Discord Desktop client).
-* **Token Cost:** **Zero-to-Low** (Uses accessibility trees and local regex before ever calling an LLM).
+### 5. 💬 Discord Messenger & Autonomous Chat Takeover (`discord_messenger.py`) `[UPDATED]`
+* **OS Support:** Windows 10 and 11 only (Drives the official Discord Desktop app directly).
+* **Token Cost:** **Zero-to-Low** (Free local pixel diffing and accessibility trees; only calls Gemini when genuine new messages arrive).
 
-Allows full hands-free Discord messaging to DMs or server channels, including functional `@everyone`, `@here`, and user `@mentions`.
+A dual-purpose Discord automation powerhouse that handles both single message delivery and hands-free autonomous conversation takeover.
 
+#### Mode A: Hands-Free Discord Messaging
+Send messages to specific people (DMs) or server channels with full support for functional `@everyone`, `@here`, and real autocomplete user `@mentions`.
 * **Multi-Tier Zero-Token Architecture:**
   1. **Tier 1 (Saved Aliases):** Deep links (`discord://...`) jump directly to channels with zero search or API calls.
   2. **Tier 2 (Accessibility Tree Navigation):** Reads the Discord sidebar directly through the Windows UI Automation tree via `pywinauto`—instantly switching channels without AI vision.
   3. **Tier 3 (Vision Fallback):** Falls back to Gemini vision only when ambiguous channel searches occur.
   4. **Overload Fallback:** If Gemini hits a 429/503 rate-limit error, an internal regex parser extracts the message and queues it safely for a local confirmation prompt (`yes`/`no`).
+
+#### Mode B: Autonomous Discord Chat Takeover `[NEW]`
+Tell JARVIS *"take over this Discord chat"*, *"Discord'da konuşmayı devral"*, or *"take over the chat with Bob on Discord and tell him I'm busy"*. JARVIS monitors the conversation in the background and auto-replies to incoming messages in your texting style.
+* **Discord-Specific UI Awareness:** Unlike generic takeovers that assume mobile chat layouts (where user messages are right-aligned and others are left-aligned), this plugin is explicitly tuned to Discord desktop's vertical message stream, author avatars, and timestamps.
+* **Zero-Token Local Gatekeeper:** Uses local NumPy pixel diffing to monitor the screen every 10 seconds. If nobody has messaged you, **0 tokens are spent**.
+* **Pre-Takeover Navigation:** Automatically uses Ctrl+K or deep links to navigate to the specified contact or channel before arming the takeover loop.
+* **Dual Engine with Auto-Fallback:** Operates over a persistent Gemini Live WebSocket session harvesting output transcripts, and automatically degrades to stateless `gemini-2.5-flash` REST calls if the Live connection drops.
+* **Application Focus Guard:** Locks onto the Discord window handle. If you Alt+Tab to work on something else, JARVIS holds replies safely until Discord is focused again—never typing your chats into code editors or terminals.
+* **Quick Controls:**
+  * **Start:** *"Take over this Discord chat"*, *"Discord'da Ayşe ile sohbeti devral"*, or `action='takeover_start'`.
+  * **Stop:** *"The conversation is mine again"*, *"Discord konuşmasını geri al"*, or slam the mouse into the top-left screen corner (failsafe).
+  * **Status:** *"Is Discord takeover running?"*, *"Discord devir durumu"*, or `action='takeover_status'`.
 
 ---
 
@@ -143,4 +157,6 @@ In active development by **Gemind**:
 
 ## ⚙️ Installation
 
-Press the green button and download as a zip, then extract and put the .py files inside the python folder
+1. Press the green **Code** button and select **Download ZIP**.
+2. Extract the downloaded archive.
+3. Move the desired `.py` plugin files directly into your JARVIS `plugins/` directory.
